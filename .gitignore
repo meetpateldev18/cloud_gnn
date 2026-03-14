@@ -1,0 +1,37 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Model weights (user downloads from Kaggle)
+model/*.pt
+
+# Dataset (user downloads from Kaggle)
+dataset/*.csv
+
+# Node modules
+frontend/node_modules/
+frontend/dist/
+
+# DB
+*.db
+test_scheduler.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+pgdata/
+
+# Env
+.env

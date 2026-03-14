@@ -1,0 +1,211 @@
+/* ---- Global Styles ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+
+h1, h2, h3 {
+  color: #f1f5f9;
+}
+
+.app {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.header {
+  text-align: center;
+  padding: 32px 0 24px;
+}
+.header h1 {
+  font-size: 2rem;
+  background: linear-gradient(135deg, #38bdf8, #818cf8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.header p {
+  color: #94a3b8;
+  margin-top: 8px;
+  font-size: 1.05rem;
+}
+
+/* ---- Cards ---- */
+.card {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+  border: 1px solid #334155;
+}
+.card h2 {
+  margin-bottom: 16px;
+  font-size: 1.25rem;
+}
+
+/* ---- Grid ---- */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 900px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}
+
+/* ---- Metrics Row ---- */
+.metrics-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.metric-card {
+  flex: 1;
+  min-width: 180px;
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  border: 1px solid #334155;
+}
+.metric-card .value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #38bdf8;
+}
+.metric-card .label {
+  color: #94a3b8;
+  margin-top: 4px;
+  font-size: 0.9rem;
+}
+
+/* ---- Form ---- */
+.form-group {
+  margin-bottom: 16px;
+}
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  color: #94a3b8;
+  font-size: 0.9rem;
+}
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 1rem;
+}
+.form-group input:focus {
+  outline: none;
+  border-color: #38bdf8;
+}
+
+.btn {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-primary {
+  background: linear-gradient(135deg, #38bdf8, #818cf8);
+  color: #0f172a;
+}
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+/* ---- Result Badge ---- */
+.result-box {
+  background: #0f172a;
+  border: 1px solid #38bdf8;
+  border-radius: 10px;
+  padding: 20px;
+  margin-top: 16px;
+  text-align: center;
+}
+.result-box .machine-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #38bdf8;
+}
+.result-box .details {
+  color: #94a3b8;
+  margin-top: 8px;
+}
+
+/* ---- Table ---- */
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+}
+.comparison-table th,
+.comparison-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #334155;
+}
+.comparison-table th {
+  color: #94a3b8;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.comparison-table tr:hover {
+  background: #334155;
+}
+.highlight-row {
+  background: rgba(56, 189, 248, 0.1) !important;
+  font-weight: 600;
+}
+
+/* ---- Winner Banner ---- */
+.winner-banner {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(129, 140, 248, 0.15));
+  border: 1px solid #38bdf8;
+  border-radius: 10px;
+  padding: 16px 24px;
+  text-align: center;
+  margin-bottom: 20px;
+  font-size: 1.1rem;
+}
+.winner-banner strong {
+  color: #38bdf8;
+}
+
+/* ---- Graph Canvas ---- */
+.graph-container {
+  background: #0f172a;
+  border-radius: 8px;
+  overflow: hidden;
+  height: 400px;
+}
+
+/* ---- Status ---- */
+.status-ok { color: #4ade80; }
+.status-err { color: #f87171; }

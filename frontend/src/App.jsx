@@ -1,0 +1,92 @@
+import React, { useState, useEffect } from 'react';
+import MetricsBar from './components/MetricsBar';
+import GraphView from './components/GraphView';
+import TaskForm from './components/TaskForm';
+import ComparisonSection from './components/ComparisonSection';
+import MachineTable from './components/MachineTable';
+import { getMetrics, getComparison, getMachines, getGraph, getHealth } from './api';
+
+export default function App() {
+  const [metrics, setMetrics] = useState(null);
+  const [comparison, setComparison] = useState([]);
+  const [machines, setMachines] = useState([]);
+  const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
+  const [healthy, setHealthy] = useState(null);
+  const [lastResult, setLastResult] = useState(null);
+
+  const refresh = async () => {
+    try {
+      const [mRes, metRes, compRes, gRes, hRes] = await Promise.all([
+        getMachines(),
+        getMetrics(),
+        getComparison(),
+        getGraph(),
+        getHealth(),
+      ]);
+      setMachines(mRes.data);
+      setMetrics(metRes.data);
+      setComparison(compRes.data);
+      setGraphData(gRes.data);
+      setHealthy(hRes.data.status === 'ok');
+    } catch {
+      setHealthy(false);
+    }
+  };
+
+  useEffect(() => { refresh(); }, []);
+
+  return (
+    <div className="app">
+      <header className="header">
+        <h1>GNN Cloud Task Scheduler</h1>
+        <p>
+          Graph Neural Network-based task scheduling for distributed cloud systems
+          {healthy !== null && (
+            <span style={{ marginLeft: 12 }}>
+              — API{' '}
+              <span className={healthy ? 'status-ok' : 'status-err'}>
+                {healthy ? '● Connected' : '● Disconnected'}
+              </span>
+            </span>
+          )}
+        </p>
+      </header>
+
+      {/* KPI Metrics */}
+      <MetricsBar metrics={metrics} />
+
+      {/* Main Grid */}
+      <div className="grid-2">
+        {/* Left: Graph + Machines */}
+        <div>
+          <div className="card">
+            <h2>☁ Cloud Infrastructure Graph</h2>
+            <GraphView data={graphData} />
+          </div>
+          <MachineTable machines={machines} />
+        </div>
+
+        {/* Right: Task Submission + Result */}
+        <div>
+          <TaskForm onResult={(r) => { setLastResult(r); refresh(); }} />
+          {lastResult && (
+            <div className="card">
+              <h2>🤖 AI Scheduling Result</h2>
+              <div className="result-box">
+                <div className="machine-name">{lastResult.assigned_machine}</div>
+                <div className="details">
+                  Algorithm: <strong>{lastResult.algorithm.toUpperCase()}</strong> &nbsp;|&nbsp;
+                  Latency: <strong>{lastResult.latency} ms</strong> &nbsp;|&nbsp;
+                  Exec Time: <strong>{lastResult.execution_time} ms</strong>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Comparison Section */}
+      <ComparisonSection comparison={comparison} />
+    </div>
+  );
+}
