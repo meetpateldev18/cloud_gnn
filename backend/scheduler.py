@@ -112,8 +112,17 @@ class GNNScheduler:
 
     def _build_default_graph(self, machines: list[dict]) -> None:
         n = len(machines)
+        # Node features: normalized available_cpu, available_ram, load, bandwidth
         feats = np.array(
-            [[m["cpu_capacity"], m["ram_capacity"], m["network_bandwidth"], m["current_load"]] for m in machines],
+            [
+                [
+                    m["available_cpu"] / max(m["total_cpu"], 1.0),   # fraction of CPU still free
+                    m["available_ram"] / max(m["total_ram"], 1.0),   # fraction of RAM still free
+                    m["load"],                                         # 0-1 utilization
+                    m["bandwidth"] / 10.0,                            # normalize to ~0-1 (max 10 Gbps)
+                ]
+                for m in machines
+            ],
             dtype=np.float32,
         )
         # Fully connected edges (small graph)
@@ -128,17 +137,20 @@ class GNNScheduler:
 
     # ----- prediction -----
     def predict(self, task: dict, machines: list[dict]) -> int:
-        """Return index of the best machine for the given task."""
-        if self._machine_features is None:
-            self._build_default_graph(machines)
+        """Return index into *machines* of the best machine for the given task.
+
+        The graph is always rebuilt from the current machine state so that
+        available_cpu / available_ram / load reflect real-time allocations.
+        """
+        # Always rebuild with current state (dynamic resource updates)
+        self._build_default_graph(machines)
 
         task_feat = np.array(
-            [[task["cpu_required"], task["memory_required"], task["priority"], 0.0]],
+            [[task["cpu_request"], task["memory_request"], task["priority"], 0.0]],
             dtype=np.float32,
         )
 
         if self.model is None:
-            # Heuristic fallback: pick machine with lowest load that can handle the task
             return self._heuristic_schedule(task, machines)
 
         with torch.no_grad():
@@ -150,13 +162,13 @@ class GNNScheduler:
 
     @staticmethod
     def _heuristic_schedule(task: dict, machines: list[dict]) -> int:
-        """Simple heuristic: pick machine with most remaining capacity."""
+        """Heuristic fallback: pick machine with most remaining capacity."""
         best, best_score = 0, -1e9
         for i, m in enumerate(machines):
-            remaining_cpu = m["cpu_capacity"] * (1 - m["current_load"]) - task["cpu_required"]
-            remaining_mem = m["ram_capacity"] - task["memory_required"]
+            remaining_cpu = m["available_cpu"] - task["cpu_request"]
+            remaining_mem = m["available_ram"] - task["memory_request"]
             if remaining_cpu >= 0 and remaining_mem >= 0:
-                score = remaining_cpu + remaining_mem
+                score = remaining_cpu + remaining_mem * 0.1 + m["bandwidth"]
                 if score > best_score:
                     best, best_score = i, score
         return best

@@ -43,9 +43,19 @@ except ImportError:
     from torch_geometric.data import Data, Batch
 
 # =====================  CONFIG  =====================
-DATASET_DIR = "/kaggle/input/google-2019-cluster-sample"  # Kaggle default path
-# If running locally, change to:
-# DATASET_DIR = "./dataset"
+BORG_FILE   = "borg_traces_data.csv"   # Actual filename in dataset
+
+# Try multiple possible Kaggle dataset paths (handles different dataset slugs)
+_CANDIDATE_DIRS = [
+    "/kaggle/input/google-2019-cluster-sample",
+    "/kaggle/input/datasets/derrickmwiti/google-2019-cluster-sample",
+    "/kaggle/input/google2019clustersample",
+    "/kaggle/input/google-cluster-workload-traces",
+]
+DATASET_DIR = next(
+    (d for d in _CANDIDATE_DIRS if os.path.isdir(d)),
+    "/kaggle/input/google-2019-cluster-sample"  # fallback default
+)
 
 NUM_MACHINES = 20        # Virtual machines to simulate
 HIDDEN_DIM = 64
@@ -65,37 +75,126 @@ print(f"Using device: {device}")
 # =====================  DATASET LOADING  =====================
 print("\n--- Loading Dataset ---")
 
-# Try multiple possible file patterns
-def load_csv(name, possible_suffixes=None):
-    """Try to load a CSV with different naming patterns."""
-    if possible_suffixes is None:
-        possible_suffixes = ["", "_part-00000-of-00001"]
-    
-    for suffix in possible_suffixes:
-        path = os.path.join(DATASET_DIR, f"{name}{suffix}.csv")
-        if os.path.isfile(path):
-            print(f"  Loaded: {path}")
-            return pd.read_csv(path, nrows=500000)  # Limit rows for memory
-    
-    # Try to find any file with the name pattern
+borg_path = os.path.join(DATASET_DIR, BORG_FILE)
+borg_df = None
+
+if os.path.isfile(borg_path):
+    print(f"  Loaded: {borg_path}")
+    borg_df = pd.read_csv(borg_path, nrows=500000)
+    print(f"  Shape: {borg_df.shape}")
+    print(f"  Columns: {list(borg_df.columns)}")
+else:
+    # Scan DATASET_DIR for any CSV
     if os.path.isdir(DATASET_DIR):
         for f in os.listdir(DATASET_DIR):
-            if name in f.lower() and f.endswith('.csv'):
-                path = os.path.join(DATASET_DIR, f)
-                print(f"  Loaded: {path}")
-                return pd.read_csv(path, nrows=500000)
-    
-    print(f"  [WARN] Could not find {name} CSV – generating synthetic data")
-    return None
+            if f.endswith('.csv'):
+                borg_path = os.path.join(DATASET_DIR, f)
+                print(f"  Found CSV in DATASET_DIR: {borg_path}")
+                borg_df = pd.read_csv(borg_path, nrows=500000)
+                print(f"  Shape: {borg_df.shape}")
+                print(f"  Columns: {list(borg_df.columns)}")
+                break
 
+    # Last resort: walk ALL of /kaggle/input/ to find any CSV
+    if borg_df is None and os.path.isdir("/kaggle/input"):
+        print("  Searching all of /kaggle/input/ for a CSV...")
+        for root, dirs, files in os.walk("/kaggle/input"):
+            for fname in files:
+                if fname.endswith('.csv'):
+                    borg_path = os.path.join(root, fname)
+                    print(f"  Found CSV: {borg_path}")
+                    borg_df = pd.read_csv(borg_path, nrows=500000)
+                    print(f"  Shape: {borg_df.shape}")
+                    print(f"  Columns: {list(borg_df.columns)}")
+                    break
+            if borg_df is not None:
+                break
 
-machine_df = load_csv("machine_events")
-task_df = load_csv("task_events")
-job_df = load_csv("job_events")
+    if borg_df is None:
+        print("  [WARN] No CSV found in dataset dir – will use synthetic data")
+
+# Parse borg_df into machine_df and task_df
+machine_df = None
+task_df = None
+
+if borg_df is not None:
+    cols = [c.lower().strip() for c in borg_df.columns]
+    borg_df.columns = cols
+
+    # ---- Detect CPU / memory columns ----
+    # Prefer known good Borg column names; avoid string-encoded distributions
+    _cpu_pref  = ['cycles_per_instruction', 'average_usage', 'maximum_usage',
+                  'random_sample_usage', 'cpu_usage', 'cpu_request', 'cpu_cap']
+    _mem_pref  = ['assigned_memory', 'page_cache_memory', 'memory_usage',
+                  'mem_usage', 'memory_request', 'mem_request', 'memory_cap']
+
+    cpu_col = next((c for c in _cpu_pref if c in cols), None)
+    if cpu_col is None:
+        # Generic fallback: any cpu-named col that isn't a distribution string
+        cpu_col = next((c for c in cols if 'cpu' in c and 'distribution' not in c), None)
+
+    mem_col = next((c for c in _mem_pref if c in cols), None)
+    if mem_col is None:
+        # Generic fallback: any memory col that isn't about instructions
+        mem_col = next((c for c in cols if ('mem' in c or 'memory' in c) and 'instruction' not in c and 'distribution' not in c), None)
+
+    machine_col = next((c for c in cols if c == 'machine_id' or (c != 'machine_id' and 'machine' in c)), None)
+    prio_col    = next((c for c in cols if c == 'priority' or 'prio' in c), None)
+
+    print(f"\n  Detected columns → cpu: {cpu_col}, mem: {mem_col}, machine: {machine_col}, priority: {prio_col}")
+
+    # Convert to numeric
+    for c in cols:
+        borg_df[c] = pd.to_numeric(borg_df[c], errors='coerce')
+    borg_df = borg_df.fillna(0)
+
+    # Validate detected columns have non-zero values (guard against struct strings)
+    if cpu_col and borg_df[cpu_col].max() == 0:
+        print(f"  [WARN] {cpu_col} is all zeros after coerce — trying fallback")
+        cpu_col = next((c for c in cols if borg_df[c].max() > 0 and 'cpu' in c and 'distribution' not in c), None)
+        if cpu_col is None:
+            cpu_col = next((c for c in cols if borg_df[c].max() > 0 and c not in ('time', 'collection_id', 'machine_id', 'priority', 'alloc_collection_id', 'instance_index')), None)
+        print(f"  [WARN] Fell back to cpu_col: {cpu_col}")
+
+    if mem_col and borg_df[mem_col].max() == 0:
+        print(f"  [WARN] {mem_col} is all zeros after coerce — trying fallback")
+        mem_col = next((c for c in cols if borg_df[c].max() > 0 and ('mem' in c or 'memory' in c) and 'instruction' not in c), None)
+        if mem_col is None:
+            mem_col = next((c for c in cols if borg_df[c].max() > 0 and c not in ('time', 'collection_id', 'machine_id', 'priority', 'alloc_collection_id', 'instance_index', cpu_col)), None)
+        print(f"  [WARN] Fell back to mem_col: {mem_col}")
+
+    # ---- Build machine_df ----
+    if machine_col and cpu_col and mem_col:
+        machine_df = (
+            borg_df[[machine_col, cpu_col, mem_col]]
+            .drop_duplicates(subset=[machine_col])
+            .rename(columns={machine_col: "machine_id", cpu_col: "cpu_capacity", mem_col: "memory_capacity"})
+        )
+    else:
+        # Use first two numeric columns as cpu/mem proxies
+        num_cols = [c for c in cols if borg_df[c].dtype in [np.float64, np.float32, np.int64, np.int32]]
+        if len(num_cols) >= 2:
+            machine_df = pd.DataFrame({
+                "machine_id": [f"machine_{i}" for i in range(NUM_MACHINES)],
+                "cpu_capacity": np.random.uniform(2, 16, NUM_MACHINES),
+                "memory_capacity": np.random.uniform(4, 64, NUM_MACHINES),
+            })
+
+    # ---- Build task_df ----
+    if cpu_col and mem_col:
+        task_df = borg_df.rename(columns={
+            cpu_col: "cpu_request",
+            mem_col: "memory_request",
+        })
+        if prio_col:
+            task_df = task_df.rename(columns={prio_col: "priority"})
+        else:
+            task_df["priority"] = 0
+        if machine_col:
+            task_df = task_df.rename(columns={machine_col: "machine_id"})
+        task_df = task_df[["cpu_request", "memory_request", "priority"]].copy()
 
 # =====================  SYNTHETIC FALLBACK  =====================
-# If dataset files are not available, generate synthetic training data
-
 if machine_df is None:
     print("\n--- Generating Synthetic Machine Data ---")
     machine_df = pd.DataFrame({
@@ -106,32 +205,15 @@ if machine_df is None:
 
 if task_df is None:
     print("--- Generating Synthetic Task Data ---")
-    n_tasks = 10000
+    n_tasks = 20000
     task_df = pd.DataFrame({
-        "job_id": np.random.randint(0, 1000, n_tasks),
-        "task_index": np.arange(n_tasks),
-        "machine_id": np.random.choice([f"machine_{i}" for i in range(NUM_MACHINES)], n_tasks),
-        "cpu_request": np.random.uniform(0.1, 4.0, n_tasks),
-        "memory_request": np.random.uniform(0.5, 16.0, n_tasks),
+        "cpu_request": np.random.uniform(0.05, 0.8, n_tasks),   # normalised 0-1
+        "memory_request": np.random.uniform(0.05, 0.9, n_tasks),
         "priority": np.random.randint(0, 10, n_tasks),
     })
 
 # =====================  FEATURE ENGINEERING  =====================
 print("\n--- Feature Engineering ---")
-
-# Normalize column names (Google traces use numeric column indices)
-if "machine_id" not in machine_df.columns and len(machine_df.columns) >= 3:
-    machine_df.columns = ["timestamp", "machine_id", "event_type"] + \
-        [f"col_{i}" for i in range(3, len(machine_df.columns))]
-    if len(machine_df.columns) >= 5:
-        machine_df = machine_df.rename(columns={"col_3": "cpu_capacity", "col_4": "memory_capacity"})
-
-if "cpu_request" not in task_df.columns and len(task_df.columns) >= 10:
-    col_names = ["timestamp", "missing_info", "job_id", "task_index", "machine_id",
-                 "event_type", "user", "scheduling_class", "priority", "cpu_request",
-                 "memory_request", "disk_space_request", "different_machines_restriction"]
-    task_df.columns = col_names[:len(task_df.columns)] + \
-        [f"col_{i}" for i in range(len(col_names), len(task_df.columns))]
 
 # Ensure numeric types
 for col in ["cpu_capacity", "memory_capacity"]:
@@ -142,36 +224,36 @@ for col in ["cpu_request", "memory_request", "priority"]:
     if col in task_df.columns:
         task_df[col] = pd.to_numeric(task_df[col], errors="coerce")
 
-# Fill NaN
 machine_df = machine_df.fillna(0)
 task_df = task_df.fillna(0)
 
-# Get unique machines
-if "cpu_capacity" in machine_df.columns:
-    machines = machine_df.drop_duplicates(subset=["machine_id"]).head(NUM_MACHINES)
-else:
-    machines = pd.DataFrame({
-        "machine_id": [f"machine_{i}" for i in range(NUM_MACHINES)],
-        "cpu_capacity": np.random.uniform(2, 16, NUM_MACHINES),
-        "memory_capacity": np.random.uniform(4, 64, NUM_MACHINES),
-    })
+# Get unique machines — ensure exactly NUM_MACHINES with diverse capacities
+raw_machines = machine_df.head(NUM_MACHINES) if "cpu_capacity" in machine_df.columns else pd.DataFrame()
 
-# Machine features: [cpu_capacity, memory_capacity, current_load, network_bandwidth]
 machine_features = np.zeros((NUM_MACHINES, 4), dtype=np.float32)
-for i in range(min(NUM_MACHINES, len(machines))):
-    row = machines.iloc[i]
-    machine_features[i, 0] = float(row.get("cpu_capacity", np.random.uniform(2, 16)))
-    machine_features[i, 1] = float(row.get("memory_capacity", np.random.uniform(4, 64)))
-    machine_features[i, 2] = np.random.uniform(0.05, 0.7)  # Simulated current load
-    machine_features[i, 3] = np.random.uniform(1, 10)        # Simulated bandwidth
+for i in range(NUM_MACHINES):
+    if i < len(raw_machines):
+        row = raw_machines.iloc[i]
+        cpu = float(row.get("cpu_capacity", 0))
+        mem = float(row.get("memory_capacity", 0))
+        # If values are near 0 or identical (normalised in source), spread them
+        machine_features[i, 0] = cpu if cpu > 0.001 else (2.0 + i * 0.7)
+        machine_features[i, 1] = mem if mem > 0.001 else (4.0 + i * 3.0)
+    else:
+        machine_features[i, 0] = 2.0 + i * 0.7
+        machine_features[i, 1] = 4.0 + i * 3.0
+    # Spread load so different machines are attractive for different tasks
+    machine_features[i, 2] = 0.05 + (i % 5) * 0.12   # current_load: 0.05-0.53
+    machine_features[i, 3] = 1.0 + i * 0.45           # network_bandwidth
 
-# Normalize features
+# Normalize features column-wise
 for j in range(4):
     col_max = machine_features[:, j].max()
     if col_max > 0:
         machine_features[:, j] /= col_max
 
 print(f"  Machine features shape: {machine_features.shape}")
+print(f"  CPU range (normalised): {machine_features[:,0].min():.3f} – {machine_features[:,0].max():.3f}")
 
 # =====================  GRAPH CONSTRUCTION  =====================
 print("\n--- Constructing Cloud Infrastructure Graph ---")
@@ -200,7 +282,6 @@ print(f"  edge_index shape: {edge_index.shape}")
 # =====================  TRAINING DATA  =====================
 print("\n--- Preparing Training Data ---")
 
-# For each task, the "label" is the best machine (simulated optimal assignment)
 task_features_list = []
 labels_list = []
 
@@ -209,39 +290,60 @@ sample_tasks = task_df.sample(n=n_samples, random_state=SEED).reset_index(drop=T
 
 for idx in range(n_samples):
     row = sample_tasks.iloc[idx]
-    cpu_req = float(row.get("cpu_request", np.random.uniform(0.1, 2.0)))
-    mem_req = float(row.get("memory_request", np.random.uniform(0.5, 8.0)))
-    prio = int(row.get("priority", 0))
-    arrival = idx / n_samples  # Normalized arrival time
+    cpu_req = float(row.get("cpu_request", 0))
+    mem_req = float(row.get("memory_request", 0))
+    prio    = float(row.get("priority", 0))
+    arrival = idx / n_samples
 
-    task_feat = [cpu_req, mem_req, prio / 10.0, arrival]
+    # Clamp to [0,1] — some datasets are already normalised
+    cpu_req = np.clip(cpu_req, 0.0, 1.0) if cpu_req <= 1.0 else cpu_req / (task_df["cpu_request"].max() + 1e-6)
+    mem_req = np.clip(mem_req, 0.0, 1.0) if mem_req <= 1.0 else mem_req / (task_df["memory_request"].max() + 1e-6)
+    prio_n  = prio / max(float(task_df["priority"].max()), 1.0)
+
+    task_feat = [float(cpu_req), float(mem_req), float(prio_n), float(arrival)]
     task_features_list.append(task_feat)
 
-    # Optimal machine: best fit based on remaining capacity
+    # ---- FIXED label generation: balanced capacity-fit score ----
+    # Each machine gets a score based on how well it fits THIS specific task.
+    # Adding task-specific noise ensures all 20 machines can "win" depending on task requirements.
     scores = []
     for j in range(NUM_MACHINES):
-        cpu_cap = machine_features[j, 0] * 16  # Denormalize approx
-        mem_cap = machine_features[j, 1] * 64
-        load = machine_features[j, 2]
-        remaining = (cpu_cap * (1 - load) - cpu_req) + (mem_cap - mem_req)
-        # Penalize overloaded machines
-        if cpu_cap * (1 - load) < cpu_req:
-            remaining -= 100
-        scores.append(remaining)
+        cpu_avail  = machine_features[j, 0] * (1.0 - machine_features[j, 2])
+        mem_avail  = machine_features[j, 1]
+        bandwidth  = machine_features[j, 3]
+
+        fit_cpu = cpu_avail - cpu_req          # positive = enough room
+        fit_mem = mem_avail - mem_req
+
+        if fit_cpu < 0 or fit_mem < 0:
+            score = -10.0                       # hard penalty for infeasible
+        else:
+            # Prefer tightest feasible fit (Best-Fit style) for diversity
+            score = -(fit_cpu + fit_mem) + bandwidth * 0.1
+            # Add small per-task noise so model learns generalisation
+            score += np.random.normal(0, 0.05)
+
+        scores.append(score)
     labels_list.append(int(np.argmax(scores)))
 
 task_features = np.array(task_features_list, dtype=np.float32)
 labels = np.array(labels_list, dtype=np.int64)
 
-# Normalize task features
+# Final normalisation of task features
 for j in range(task_features.shape[1]):
-    col_max = task_features[:, j].max()
+    col_max = np.abs(task_features[:, j]).max()
     if col_max > 0:
         task_features[:, j] /= col_max
 
+label_counts = pd.Series(labels).value_counts()
 print(f"  Task features shape: {task_features.shape}")
 print(f"  Labels shape: {labels.shape}")
-print(f"  Label distribution (top 5): {pd.Series(labels).value_counts().head()}")
+print(f"  Unique machines used as labels: {label_counts.shape[0]} / {NUM_MACHINES}")
+print(f"  Label distribution (top 5):\n{label_counts.head()}")
+
+# Warn if still imbalanced
+if label_counts.shape[0] < NUM_MACHINES // 2:
+    print("  [WARN] Labels still imbalanced — model may overfit. Consider increasing noise.")
 
 # Train/val split
 split = int(0.8 * n_samples)

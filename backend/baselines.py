@@ -30,17 +30,15 @@ class RandomScheduler:
 
 
 class FirstFitScheduler:
-    """Assign task to the first machine with enough capacity."""
+    """Assign task to the first machine with enough available resources."""
 
     def schedule(self, task: dict, machines: list[dict]) -> tuple[int, float]:
         start = time.perf_counter()
         for i, m in enumerate(machines):
-            remaining_cpu = m["cpu_capacity"] * (1 - m["current_load"])
-            remaining_mem = m["ram_capacity"]
-            if remaining_cpu >= task["cpu_required"] and remaining_mem >= task["memory_required"]:
+            if m["available_cpu"] >= task["cpu_request"] and m["available_ram"] >= task["memory_request"]:
                 latency = time.perf_counter() - start
                 return i, latency
-        # Fallback to first machine
+        # Fallback to first machine if none strictly fit
         latency = time.perf_counter() - start
         return 0, latency
 
@@ -48,13 +46,13 @@ class FirstFitScheduler:
 # ---- Simulation helpers ----
 
 def simulate_execution_time(task: dict, machine: dict) -> float:
-    """Estimate execution time based on task/machine mismatch."""
-    cpu_ratio = task["cpu_required"] / max(machine["cpu_capacity"], 0.01)
-    load_penalty = 1 + machine["current_load"] * 2
+    """Estimate simulated execution time (ms) based on task/machine mismatch."""
+    cpu_ratio = task["cpu_request"] / max(machine["total_cpu"], 0.01)
+    load_penalty = 1 + machine["load"] * 2
     return round(cpu_ratio * load_penalty * 100 + random.uniform(5, 20), 2)
 
 
 def compute_cpu_utilization(task: dict, machine: dict) -> float:
     """Estimate resulting CPU utilization after placing task."""
-    added = task["cpu_required"] / max(machine["cpu_capacity"], 0.01)
-    return round(min(machine["current_load"] + added, 1.0), 4)
+    added = task["cpu_request"] / max(machine["total_cpu"], 0.01)
+    return round(min(machine["load"] + added, 1.0), 4)
