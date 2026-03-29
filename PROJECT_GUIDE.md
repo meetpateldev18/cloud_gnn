@@ -4,7 +4,7 @@
 **Live App:** http://3.87.161.91:5173  
 **API:** http://3.87.161.91:8000  
 **API Docs (Swagger):** http://3.87.161.91:8000/docs  
-**Version:** 2.0.0 — Dynamic Resource Lifecycle Simulator
+**Version:** 2.1.0 — Dual-Model GNN Scheduler (GAT + GraphSAGE)
 
 ---
 
@@ -157,6 +157,13 @@ We train a Graph Attention Network (GAT) that:
 
 **Result:** 75.1% accuracy (picking the optimal machine), vs ~5% for random.
 
+### Version 2.1 Addition: GraphSAGE as a Second GNN
+
+A second GNN architecture — **GraphSAGE** — has been added as a fifth comparison algorithm.
+Instead of attention weights it uses mean aggregation over neighbors, making it faster (~5-8 ms)
+and naturally inductive (works if machines are added later). Both GNNs are trained on the
+same dataset and displayed side-by-side in the dashboard comparison section.
+
 ### Version 2.0 Addition: Real-Time Simulation
 
 Beyond just picking a machine, v2.0 simulates the full task lifecycle:
@@ -187,10 +194,12 @@ Beyond just picking a machine, v2.0 simulates the full task lifecycle:
  |  +-------+--------+                             |
  |  |                |                             |
  |  v                v                             |
- |  GNN Model        Background Worker             |
+ |  GNN Models       Background Worker             |
  |  GAT 2 layers     Checks every 1 second         |
  |  31,169 params    Releases resources            |
  |  75.1% accuracy   on task completion            |
+ |  GraphSAGE 2L     (used for comparison)         |
+ |  12,480 params    5 algorithms total            |
  |          |                                      |
  |          v                                      |
  |  PostgreSQL DB                                  |
@@ -213,7 +222,7 @@ Build graph: 20 nodes x 4 features (cpu_ratio, ram_ratio, load, bandwidth)
      |
      v
 GNN: Forward pass -> scores all 20 machines -> pick highest
-Run Round Robin, Random, First Fit in parallel for comparison
+Run GraphSAGE, Round Robin, Random, First Fit in parallel for comparison (5 total)
      |
      v
 Deduct CPU+RAM from winning machine in DB
@@ -583,7 +592,7 @@ This is safe because it only drops when the schema is incompatible (upgrade path
 ### GET /health
 ```bash
 curl http://3.87.161.91:8000/health
-# {"status":"ok","service":"gnn-cloud-scheduler","version":"2.0.0"}
+# {"status":"ok","service":"gnn-cloud-scheduler","version":"2.1.0"}
 ```
 
 ### GET /machines
@@ -606,6 +615,7 @@ Response (machine available):
   "execution_duration": 12,
   "gnn": {"machine_id": "machine-011", "execution_time": 8.3},
   "comparison": {
+    "graphsage":   {"machine_id": "machine-010", "execution_time": 6.1},
     "round_robin": {"machine_id": "machine-003", "execution_time": 18.7},
     "random":      {"machine_id": "machine-017", "execution_time": 15.2},
     "first_fit":   {"machine_id": "machine-001", "execution_time": 22.1}
@@ -685,7 +695,7 @@ D3 force-directed graph of 20 machines. Nodes colored by load. Click to highligh
 3. CPU Utilization (%) — resource efficiency
 4. Cluster Throughput (tasks/min)
 
-Algorithm colors: GNN=indigo, Round Robin=amber, Random=red, First Fit=green
+Algorithm colors: GNN=indigo, GraphSAGE=violet, Round Robin=amber, Random=red, First Fit=green
 
 ### TaskList.jsx (NEW in v2.0)
 Table: Task ID | Status (colored badge) | Machine | CPU Req | RAM Req | Priority | Duration | Wait
@@ -1042,7 +1052,8 @@ ALTER USER postgres PASSWORD '12345678';
 
 **Start backend:**
 ```powershell
-.\venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+# From cloud_scheduler/ folder (venv is one level up)
+..\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 **Start frontend (separate terminal):**
